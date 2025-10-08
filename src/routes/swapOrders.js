@@ -6,9 +6,7 @@ const User = require("../models/User");
 const { body, validationResult } = require("express-validator");
 const { Op } = require("sequelize");
 
-// ============================
 // POST: Creazione nuovo ordine swap
-// ============================
 router.post(
   "/",
   body("productIds").isArray({ min: 1 }),
@@ -52,9 +50,8 @@ router.post(
   }
 );
 
-// ============================
 // GET: Leggere un ordine per ID
-// ============================
+
 router.get("/:id", async (req, res) => {
   try {
     const order = await SwapOrder.findByPk(req.params.id, {
@@ -67,9 +64,8 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// ============================
 // GET: Ottenere tutti gli ordini con filtri
-// ============================
+
 router.get("/", async (req, res) => {
   const { date, productId } = req.query;
 
@@ -122,9 +118,8 @@ router.get("/", async (req, res) => {
   }
 });
 
-// ============================
 // PUT: Aggiornare un ordine
-// ============================
+
 router.put(
   "/:id",
   body("productIds").optional().isArray({ min: 1 }),
@@ -169,9 +164,8 @@ router.put(
   }
 );
 
-// ============================
 // DELETE: Eliminare un ordine
-// ============================
+
 router.delete("/:id", async (req, res) => {
   try {
     const order = await SwapOrder.findByPk(req.params.id);
