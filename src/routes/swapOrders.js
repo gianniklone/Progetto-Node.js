@@ -4,91 +4,107 @@ const SwapOrder = require("../models/SwapOrder");
 const Product = require("../models/Product");
 const User = require("../models/User");
 const { body, validationResult } = require("express-validator");
-const { Op } = require("sequelize");
 
-// POST: Creazione nuovo ordine swap
+// Creare un ordine swap
 router.post(
   "/",
   body("productIds").isArray({ min: 1 }),
-  body("userIds").isArray({ min: 2 }), // almeno due utenti partecipanti
-  async (req, res) => {
+  body("userIds").isArray({ min: 2 }),
+  async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty())
       return res.status(400).json({ errors: errors.array() });
 
     try {
-      const { productIds, userIds } = req.body;
+      const { productIds, userIds, status, note } = req.body;
+      const swapOrder = await SwapOrder.create({ status, note });
 
-      // Controllo che tutti i prodotti esistano
-      const products = await Product.findAll({ where: { id: productIds } });
-      if (products.length !== productIds.length)
-        return res
-          .status(400)
-          .json({ error: "Alcuni productIds non esistono" });
+      if (productIds && productIds.length > 0) {
+        const products = await Product.findAll({ where: { id: productIds } });
+        await swapOrder.addProducts(products);
+      }
 
-      // Controllo che tutti gli utenti esistano
-      const users = await User.findAll({ where: { id: userIds } });
-      if (users.length !== userIds.length)
-        return res.status(400).json({ error: "Alcuni userIds non esistono" });
+      if (userIds && userIds.length > 1) {
+        const users = await User.findAll({ where: { id: userIds } });
+        await swapOrder.addUsers(users);
+      }
 
-      // Creazione ordine swap
-      const swapOrder = await SwapOrder.create();
-
-      // Associa prodotti e utenti all'ordine
-      await swapOrder.addProducts(products);
-      await swapOrder.addUsers(users);
-
-      // Ricarica ordine con relazioni
-      const orderWithRelations = await SwapOrder.findByPk(swapOrder.id, {
+      const result = await SwapOrder.findByPk(swapOrder.id, {
         include: [Product, User],
       });
 
-      res.status(201).json({ data: orderWithRelations });
+      res.status(201).json({ data: result });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      next(err);
     }
   }
 );
 
-// GET: Leggere un ordine per ID
-
-router.get("/:id", async (req, res) => {
+// Lettura ordine swap per ID
+router.get("/:id", async (req, res, next) => {
   try {
-    const order = await SwapOrder.findByPk(req.params.id, {
+    const swapOrder = await SwapOrder.findByPk(req.params.id, {
       include: [Product, User],
     });
-    if (!order) return res.status(404).json({ error: "Ordine non trovato" });
-    res.json({ data: order });
+    if (!swapOrder)
+      return res.status(404).json({ error: "Ordine swap non trovato" });
+    res.json({ data: swapOrder });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
-// GET: Ottenere tutti gli ordini con filtri
+// Aggiornare un ordine swap
+router.put(
+  "/:id",
+  body("status").optional().isIn(["pending", "completed", "cancelled"]),
+  body("note").optional().isString(),
+  async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty())
+      return res.status(400).json({ errors: errors.array() });
 
-router.get("/", async (req, res) => {
-  const { date, productId } = req.query;
+    try {
+      const swapOrder = await SwapOrder.findByPk(req.params.id);
+      if (!swapOrder)
+        return res.status(404).json({ error: "Ordine swap non trovato" });
 
+      const { status, note } = req.body;
+      await swapOrder.update({ status, note });
+      res.json({ data: swapOrder });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Eliminare un ordine swap
+router.delete("/:id", async (req, res, next) => {
   try {
+    const swapOrder = await SwapOrder.findByPk(req.params.id);
+    if (!swapOrder)
+      return res.status(404).json({ error: "Ordine swap non trovato" });
+
+    await swapOrder.destroy();
+    res.json({ message: "Ordine swap eliminato correttamente" });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Filtrare ordini
+router.get("/", async (req, res, next) => {
+  try {
+    const { productId, startDate, endDate } = req.query;
+
     const whereClause = {};
-    const includeClause = [];
-
-    // Controllo della data
-    if (date) {
-      const parsedDate = new Date(date);
-      if (isNaN(parsedDate.getTime())) {
-        return res
-          .status(400)
-          .json({ error: "Data non valida. Usa formato YYYY-MM-DD" });
-      }
-
+    if (startDate && endDate) {
       whereClause.createdAt = {
-        [Op.gte]: parsedDate,
-        [Op.lt]: new Date(parsedDate.getTime() + 24 * 60 * 60 * 1000),
+        [Op.between]: [new Date(startDate), new Date(endDate)],
       };
     }
 
-    // Filtro per prodotto
+    const includeClause = [];
     if (productId) {
       includeClause.push({
         model: Product,
@@ -105,76 +121,9 @@ router.get("/", async (req, res) => {
       include: includeClause,
     });
 
-    if (orders.length === 0) {
-      return res.json({
-        data: [],
-        message: "Nessun ordine trovato per i filtri specificati",
-      });
-    }
-
     res.json({ data: orders });
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// PUT: Aggiornare un ordine
-
-router.put(
-  "/:id",
-  body("productIds").optional().isArray({ min: 1 }),
-  body("userIds").optional().isArray({ min: 2 }),
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty())
-      return res.status(400).json({ errors: errors.array() });
-
-    try {
-      const order = await SwapOrder.findByPk(req.params.id);
-      if (!order) return res.status(404).json({ error: "Ordine non trovato" });
-
-      const { productIds, userIds } = req.body;
-
-      // Aggiorna prodotti se presenti
-      if (productIds) {
-        const products = await Product.findAll({ where: { id: productIds } });
-        if (products.length !== productIds.length)
-          return res
-            .status(400)
-            .json({ error: "Alcuni productIds non esistono" });
-        await order.setProducts(products);
-      }
-
-      // Aggiorna utenti se presenti
-      if (userIds) {
-        const users = await User.findAll({ where: { id: userIds } });
-        if (users.length !== userIds.length)
-          return res.status(400).json({ error: "Alcuni userIds non esistono" });
-        await order.setUsers(users);
-      }
-
-      // Ricarica ordine con relazioni
-      const updatedOrder = await SwapOrder.findByPk(order.id, {
-        include: [Product, User],
-      });
-      res.json({ data: updatedOrder });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  }
-);
-
-// DELETE: Eliminare un ordine
-
-router.delete("/:id", async (req, res) => {
-  try {
-    const order = await SwapOrder.findByPk(req.params.id);
-    if (!order) return res.status(404).json({ error: "Ordine non trovato" });
-
-    await order.destroy();
-    res.json({ message: "Ordine eliminato correttamente" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    next(err);
   }
 });
 
